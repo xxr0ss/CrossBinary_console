@@ -3,11 +3,17 @@
 #include <inttypes.h>
 
 #include <capstone/capstone.h>
+#include "binary.h"
+
 
 #define CODE "\x48\x8B\x05\x4E\x83\x6E\x00"
 
+ELF_Binary elf("D:/Dev", nullptr);
+
 int main(void)
 {
+	printf("testelf: %d", elf.parse_bytes());
+
 	printf("Hello My capstone tool\n");
 	csh handle;
 	cs_insn *insn;

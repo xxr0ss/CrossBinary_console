@@ -1,11 +1,10 @@
 cmake_minimum_required(VERSION 3.15)
 
-project(MyTool)
+project(CrossBinary_Console VERSION 0.1)
 set(CMAKE_CXX_STANDARD 14)
 
-
+# add thirdparty module capstone engine
 add_subdirectory(thirdparty/capstone)
-
 
 get_target_property(CAPSTONE_SHARED_OUTPUT_NAME capstone-shared OUTPUT_NAME)
 get_target_property(CAPSTONE_SHARED_IMPORT_SUFFIX capstone-shared IMPORT_SUFFIX)
@@ -15,10 +14,23 @@ message(STATUS "CS_LIB_NAME:" ${CS_LIB_NAME})
 get_target_property(CAPSTONE_INCLUDE_DIR capstone-shared INCLUDE_DIRECTORIES)
 message(STATUS "CS_INC_DIR: "${CAPSTONE_INCLUDE_DIR})
 
-set(SRC main.cpp)
 
-include_directories(${CAPSTONE_INCLUDE_DIR} ${CMAKE_CURRENT_LIST_DIR}/include)
-add_executable(${PROJECT_NAME} ${SRC})
+set(CB_INCLUDE_ROOT_DIR ${CMAKE_CURRENT_LIST_DIR}/include)
+
+configure_file(${CB_INCLUDE_ROOT_DIR}/config.h.in ${CB_INCLUDE_ROOT_DIR}/config.h)
+
+include_directories(
+    ${CAPSTONE_INCLUDE_DIR}
+    ${CB_INCLUDE_ROOT_DIR}
+    ${CB_INCLUDE_ROOT_DIR}/binary
+)
+
+file(GLOB_RECURSE CB_SRC
+    ${CMAKE_CURRENT_LIST_DIR}/src/*.c
+    ${CMAKE_CURRENT_LIST_DIR}/src/*.cpp
+)
+
+add_executable(${PROJECT_NAME} ${CB_SRC})
 target_link_libraries(${PROJECT_NAME} ${CMAKE_CURRENT_LIST_DIR}/lib/${CS_LIB_NAME})
 
 
