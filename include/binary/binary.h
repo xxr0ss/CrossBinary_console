@@ -70,7 +70,7 @@ public:
         ARCH_X86 = 1
     };
 
-    Binary() : type(BIN_TYPE_AUTO), arch(ARCH_NONE), bits(0), entry(0), bytes(nullptr) {}
+    Binary() : type(BIN_TYPE_AUTO), arch(ARCH_NONE), bits(0), entry(0), bytes(nullptr), base_addr(0) {}
     Binary(BinaryType type, std::string filename, uint8_t *bytes) : type(type), filename(filename), bytes(bytes) {}
     ~Binary()
     {
@@ -92,6 +92,7 @@ public:
     BinaryType type;
     BinaryArch arch;
     unsigned bits;
+    address base_addr;
     address entry;
     std::vector<Section> sections;
     std::vector<Symbol> symbols;

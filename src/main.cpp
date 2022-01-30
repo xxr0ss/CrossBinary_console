@@ -7,11 +7,10 @@
 #include <filesystem>
 #include <fstream>
 
-#define CODE "\x48\x8B\x05\x4E\x83\x6E\x00"
 
 PE_Binary *pe;
 
-int disasm()
+int disasm(PBYTE code, size_t code_addr, uint64_t code_size)
 {
 	csh handle;
 	cs_insn *insn;
@@ -19,12 +18,11 @@ int disasm()
 
 	if (cs_open(CS_ARCH_X86, CS_MODE_64, &handle) != CS_ERR_OK)
 	{
-		printf("%d", cs_errno(handle));
+		printf("CS_ERR: %d", cs_errno(handle));
 		return -1;
 	}
 
-	printf("code_size: %llu\n", sizeof(CODE) - 1);
-	count = cs_disasm(handle, (uint8_t *)CODE, sizeof(CODE) - 1, 0x1000, 0, &insn);
+	count = cs_disasm(handle, code, code_size, code_addr, 0, &insn);
 	if (count > 0)
 	{
 		size_t i;
@@ -97,6 +95,16 @@ int main(int argc, char *argv[])
 	cout << "arch: " << arch_str << endl;
 
 	printf("entry: 0x%016I64X\n", pe->entry);
+
+	for(auto section: pe->sections) {
+		if (section.type != Section::SEC_TYPE_CODE)
+			continue;
+		uint64_t delta = pe->entry - section.vma;
+		printf("Disassembling range 0x%016I64X @+ 0x%016I64X\n", pe->base_addr + pe->entry, section.size - delta);
+		disasm(section.bytes + delta, pe->base_addr + pe->entry, section.size - delta);
+	}
+
+	
 
 	return 0;
 }
