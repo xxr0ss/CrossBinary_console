@@ -4,6 +4,8 @@
 #include <stdint.h>
 #include <string>
 #include <vector>
+#include <fstream>
+#include <filesystem>
 #include "m_elf.h"
 #include "m_pe.h"
 
@@ -15,6 +17,7 @@ class Section;
 class Symbol;
 class PE_Binary;
 class ELF_Binary;
+
 
 class Symbol
 {
@@ -116,5 +119,10 @@ public:
 
     int parse_bytes() override;
 };
+
+
+
+Binary::BinaryType detect_file_binary_type(std::filesystem::path filename);
+
 
 #endif /* BINARY_H */

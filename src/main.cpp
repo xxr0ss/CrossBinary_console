@@ -7,9 +7,6 @@
 #include <filesystem>
 #include <fstream>
 
-
-PE_Binary *pe;
-
 int disasm(PBYTE code, size_t code_addr, uint64_t code_size)
 {
 	csh handle;
@@ -29,7 +26,7 @@ int disasm(PBYTE code, size_t code_addr, uint64_t code_size)
 		for (i = 0; i < count; i++)
 		{
 			auto ins = &insn[i];
-			printf("0x%I64X:\t", ins->address);
+			printf("0x%016I64X:\t", ins->address);
 			for (int k = 0; k < 16; k++)
 			{
 				if (k < ins->size)
@@ -50,61 +47,78 @@ int disasm(PBYTE code, size_t code_addr, uint64_t code_size)
 	return 0;
 }
 
-
-
 using namespace std;
 
 int main(int argc, char *argv[])
 {
-	if (argc == 1) {
+	if (argc == 1)
+	{
 		printf("Usage: %s <file>", argv[0]);
 		return 0;
 	}
 
-	
 	auto filename = filesystem::path(argv[1]);
 	auto abs_fname = filesystem::absolute(filename);
 
+	Binary::BinaryType file_binary_type = detect_file_binary_type(abs_fname.generic_string());
+
 	ifstream binary_file(abs_fname, ios::in | ios::binary);
 
-	if(!binary_file) {
+	if (!binary_file)
+	{
 		cout << "No such file" << filename << endl;
 		return 0;
 	}
 
 	binary_file.seekg(0, ios::end);
 	auto filesize = binary_file.tellg();
-	cout << "filesize: " << filesize << "B" << endl;
+	cout << "Filesize: " << filesize << "B" << endl;
 
 	binary_file.seekg(0, ios::beg);
 	auto buffer = (PBYTE)malloc(sizeof(BYTE) * filesize);
-	binary_file.read((char*)buffer, filesize);
+	binary_file.read((char *)buffer, filesize);
 
-	pe = new PE_Binary(abs_fname.generic_string(), buffer);
-	pe->parse_bytes();
+	Binary *binary;
+	if (file_binary_type == Binary::BIN_TYPE_PE)
+	{
+		binary = new PE_Binary(abs_fname.generic_string(), buffer);
+		cout << "Binary type: PE" << endl;
+	}
+	else if (file_binary_type == Binary::BIN_TYPE_ELF)
+	{
+		binary = new ELF_Binary(abs_fname.generic_string(), buffer);
+		cout << "Binary type: ELF" << endl;
+	}
+	else
+	{
+		cout << "Unsupported binary type" << endl;
+		return 0;
+	}
+	binary->parse_bytes();
 
 	cout << "Parsing result: " << endl;
-	cout << "filename: " << pe->filename << endl;
-	
+	cout << "Filename: " << binary->filename << endl;
+
 	string arch_str;
-	if(pe->arch == Binary::BinaryArch::ARCH_X86) {
+	if (binary->arch == Binary::BinaryArch::ARCH_X86)
+	{
 		arch_str = "X86";
-	}else{
+	}
+	else
+	{
 		arch_str = "UKN";
 	}
-	cout << "arch: " << arch_str << endl;
+	cout << "Arch: " << arch_str << endl;
 
-	printf("entry: 0x%016I64X\n", pe->entry);
+	printf("Entry: 0x%016I64X\n", binary->entry);
 
-	for(auto section: pe->sections) {
-		if (section.type != Section::SEC_TYPE_CODE)
-			continue;
-		uint64_t delta = pe->entry - section.vma;
-		printf("Disassembling range 0x%016I64X @+ 0x%016I64X\n", pe->base_addr + pe->entry, section.size - delta);
-		disasm(section.bytes + delta, pe->base_addr + pe->entry, section.size - delta);
+	for(auto section: binary->sections) {
+		if (section.name == ".text") {
+			cout << section.name << endl;
+
+			disasm(section.bytes, binary->base_addr + section.vma, section.size);
+		}
 	}
-
-	
 
 	return 0;
 }
