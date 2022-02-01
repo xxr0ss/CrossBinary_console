@@ -91,6 +91,10 @@ public:
     */
     virtual int parse_bytes() { return 0; };
 
+    Section *get_text_section() {
+        for(auto &s: sections) if(s.name == ".text") return &s; return NULL;
+    }
+
     std::string filename;
     BinaryType type;
     BinaryArch arch;

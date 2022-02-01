@@ -112,6 +112,14 @@ int main(int argc, char *argv[])
 
 	printf("Entry: 0x%016I64X\n", binary->entry);
 
+	int count = binary->symbols.size();
+	printf("%d symbol%s found, symbols with name:\n", count, count > 1 ? "s" : "");
+	for(auto &sym: binary->symbols) {
+		if (!sym.name.empty()) {
+			printf("0x%016I64X: %s\n", sym.addr, sym.name.c_str());
+		}
+	}
+
 	for(auto section: binary->sections) {
 		if (section.name == ".text") {
 			cout << section.name << endl;

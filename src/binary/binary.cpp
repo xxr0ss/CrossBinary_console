@@ -86,11 +86,11 @@ int PE_Binary::parse_bytes()
         s.vma = sh.VirtualAddress;
 
         auto ch_code = sh.Characteristics;
-        if (ch_code | IMAGE_SCN_CNT_CODE)
+        if (ch_code & IMAGE_SCN_CNT_CODE)
         {
             s.type = Section::SEC_TYPE_CODE;
         }
-        else if (ch_code | IMAGE_SCN_CNT_INITIALIZED_DATA || ch_code | IMAGE_SCN_CNT_UNINITIALIZED_DATA)
+        else if (ch_code & IMAGE_SCN_CNT_INITIALIZED_DATA || ch_code & IMAGE_SCN_CNT_UNINITIALIZED_DATA)
         {
             s.type = Section::SEC_TYPE_DATA;
         }
@@ -138,8 +138,9 @@ int ELF_Binary::parse_bytes()
         // TODO: add other machin types
     }
 
-    char *sht_strtab = nullptr;
-    /* get entry  and sections*/
+    /* get entry, sections, symbols */
+    char *shstrtab = nullptr;
+    char *strtab = nullptr;
     size_t sh_num;
     if (32 == bits)
     {
@@ -148,23 +149,35 @@ int ELF_Binary::parse_bytes()
         sh_num = ehdr->e_shnum;
         Elf32_Shdr *shdr = (Elf32_Shdr *)(bytes + ehdr->e_shoff);
 
+        // get string table for the names for section headers
         for (size_t i = sh_num - 1; i >= 0; i--)
         {
             if (shdr[i].sh_type == SHT_STRTAB)
             {
-                sht_strtab = (char *)(this->bytes + shdr[i].sh_offset);
-                break;
+                // assume the current one is the .shstrtab
+                shstrtab = (char *)(bytes + shdr[i].sh_offset);
+                if (std::string(&shstrtab[shdr[i].sh_name]) == ".shstrtab")
+                {
+                    break;
+                }
             }
+            // keep the shstrtab a nullptr when not found
+            shstrtab = nullptr;
         }
 
         for (size_t i = 0; i < sh_num; i++)
         {
             Section s;
             s.binary = this;
-            s.bytes = (uint8_t*)(bytes + shdr[i].sh_offset);
-            if (sht_strtab && sht_strtab[shdr[i].sh_name])
+            s.bytes = (uint8_t *)(bytes + shdr[i].sh_offset);
+            if (shstrtab && shstrtab[shdr[i].sh_name])
             {
-                s.name = &sht_strtab[shdr[i].sh_name];
+                s.name = &shstrtab[shdr[i].sh_name];
+                if (!strtab && s.name == ".strtab")
+                {
+                    // get strtab
+                    strtab = (char *)(bytes + shdr[i].sh_offset);
+                }
             }
             else
             {
@@ -172,23 +185,58 @@ int ELF_Binary::parse_bytes()
             }
             s.size = shdr[i].sh_size;
             s.vma = shdr[i].sh_addr;
-            if (shdr[i].sh_type | SHT_PROGBITS)
+            if (shdr[i].sh_type == SHT_PROGBITS)
             {
                 s.type = Section::SEC_TYPE_CODE;
             }
-            else if (shdr[i].sh_type | SHT_NULL)
+            else if (shdr[i].sh_type == SHT_NULL)
             {
                 s.type = Section::SEC_TYPE_NONE;
             }
             else
             {
-                s.type = Section::SEC_TYPE_CODE;
+                s.type = Section::SEC_TYPE_DATA;
             }
             sections.push_back(s);
+        }
+
+        if (strtab)
+        {
+            // there's no point looking for symbols if we do not have strtab
+            Elf32_Sym *symtab = nullptr;
+            size_t sym_count = 0;
+            for (size_t i = sh_num - 1; i >= 0; i--)
+            {
+                if (shdr[i].sh_type != SHT_SYMTAB)
+                    continue;
+
+                symtab = (Elf32_Sym *)(bytes + shdr[i].sh_offset);
+                sym_count = shdr[i].sh_size / sizeof(Elf32_Sym);
+
+                for (int j = 0; j < sym_count; j++)
+                {
+                    Symbol sym;
+                    if (symtab[j].st_name != 0)
+                        sym.name = &strtab[symtab[j].st_name];
+                    else
+                        sym.name = "";
+
+                    if (symtab[j].st_info & STT_FUNC)
+                        sym.type = Symbol::SYM_TYPE_FUNC;
+                    else
+                        sym.type = Symbol::SYM_TYPE_UKN;
+
+                    sym.addr = symtab[j].st_value;
+                    symbols.push_back(sym);
+                }
+
+                break;
+            }
         }
     }
     else if (64 == bits)
     {
+        // refer to 32 bits for code comments
         Elf64_Ehdr *ehdr = (Elf64_Ehdr *)bytes;
         entry = ehdr->e_entry;
         sh_num = ehdr->e_shnum;
@@ -198,19 +246,27 @@ int ELF_Binary::parse_bytes()
         {
             if (shdr[i].sh_type == SHT_STRTAB)
             {
-                sht_strtab = (char *)(this->bytes + shdr[i].sh_offset);
-                break;
+                shstrtab = (char *)(bytes + shdr[i].sh_offset);
+                if (std::string(&shstrtab[shdr[i].sh_name]) == ".shstrtab")
+                {
+                    break;
+                }
             }
+            shstrtab = nullptr;
         }
 
         for (size_t i = 0; i < sh_num; i++)
         {
             Section s;
             s.binary = this;
-            s.bytes = (uint8_t*)(bytes + shdr[i].sh_offset);
-            if (sht_strtab && sht_strtab[shdr[i].sh_name])
+            s.bytes = (uint8_t *)(bytes + shdr[i].sh_offset);
+            if (shstrtab && shstrtab[shdr[i].sh_name])
             {
-                s.name = &sht_strtab[shdr[i].sh_name];
+                s.name = &shstrtab[shdr[i].sh_name];
+                if (!strtab && s.name == ".strtab")
+                {
+                    strtab = (char *)(bytes + shdr[i].sh_offset);
+                }
             }
             else
             {
@@ -218,19 +274,52 @@ int ELF_Binary::parse_bytes()
             }
             s.size = shdr[i].sh_size;
             s.vma = shdr[i].sh_addr;
-            if (shdr[i].sh_type | SHT_PROGBITS)
+            if (shdr[i].sh_type == SHT_PROGBITS)
             {
                 s.type = Section::SEC_TYPE_CODE;
             }
-            else if (shdr[i].sh_type | SHT_NULL)
+            else if (shdr[i].sh_type == SHT_NULL)
             {
                 s.type = Section::SEC_TYPE_NONE;
             }
             else
             {
-                s.type = Section::SEC_TYPE_CODE;
+                s.type = Section::SEC_TYPE_DATA;
             }
             sections.push_back(s);
+        }
+
+        if (strtab)
+        {
+            Elf64_Sym *symtab = nullptr;
+            size_t sym_count = 0;
+            for (size_t i = sh_num - 1; i >= 0; i--)
+            {
+                if (shdr[i].sh_type != SHT_SYMTAB)
+                    continue;
+
+                symtab = (Elf64_Sym *)(bytes + shdr[i].sh_offset);
+                sym_count = shdr[i].sh_size / sizeof(Elf64_Sym);
+
+                for (int j = 0; j < sym_count; j++)
+                {
+                    Symbol sym;
+                    if (symtab[j].st_name != 0)
+                        sym.name = &strtab[symtab[j].st_name];
+                    else
+                        sym.name = "";
+
+                    if (symtab[j].st_info & STT_FUNC)
+                        sym.type = Symbol::SYM_TYPE_FUNC;
+                    else
+                        sym.type = Symbol::SYM_TYPE_UKN;
+
+                    sym.addr = symtab[j].st_value;
+                    symbols.push_back(sym);
+                }
+
+                break;
+            }
         }
     }
 
