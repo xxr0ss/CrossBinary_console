@@ -6,43 +6,159 @@
 #include <iostream>
 #include <filesystem>
 #include <fstream>
+#include <queue>
+#include <map>
 
-int disasm(PBYTE code, size_t code_addr, uint64_t code_size)
+void print_ins(cs_insn *ins)
 {
-	csh handle;
-	cs_insn *insn;
-	size_t count;
-
-	if (cs_open(CS_ARCH_X86, CS_MODE_64, &handle) != CS_ERR_OK)
+	printf("0x%016I64x: ", ins->address);
+	for (size_t i = 0; i < 16; i++)
 	{
-		printf("CS_ERR: %d", cs_errno(handle));
+		if (i < ins->size)
+			printf("%02x ", ins->bytes[i]);
+		else
+			printf("   ");
+	}
+	printf("%-12s %s\n", ins->mnemonic, ins->op_str);
+}
+
+bool is_cs_cflow_group(uint8_t g)
+{
+	return g == CS_GRP_JUMP || g == CS_GRP_CALL || g == CS_GRP_RET || g == CS_GRP_IRET;
+}
+
+bool is_cs_cflow_ins(cs_insn *ins)
+{
+	for (size_t i = 0; i < ins->detail->groups_count; i++)
+	{
+		if (is_cs_cflow_group(ins->detail->groups[i]))
+			return true;
+	}
+	return false;
+}
+
+bool is_cs_unconditional_cflow_ins(cs_insn *ins)
+{
+	switch (ins->id)
+	{
+	case X86_INS_JMP:
+	case X86_INS_LJMP:
+	case X86_INS_RET:
+	case X86_INS_RETF:
+	case X86_INS_RETFQ:
+		return true;
+	default:
+		return false;
+	}
+}
+
+address get_cs_ins_immediate_target(cs_insn *ins)
+{
+	cs_x86_op *cs_op;
+	for (size_t i = 0; i < ins->detail->groups_count; i++)
+	{
+		if (is_cs_cflow_group(ins->detail->groups[i]))
+		{
+			for (size_t j = 0; j < ins->detail->x86.op_count; j++)
+			{
+				cs_op = &ins->detail->x86.operands[j];
+				if (cs_op->type == X86_OP_IMM)
+					return cs_op->imm;
+			}
+		}
+	}
+	return 0;
+}
+
+int disasm(Binary *bin)
+{
+	csh dis;
+
+	Section *text = bin->get_text_section();
+	if (!text)
+	{
+		fprintf(stderr, "Nothing to disassemble\n");
+		return 0;
+	}
+
+	cs_mode mode = (cs_mode)(bin->bits >> 4);
+	if (cs_open(CS_ARCH_X86, mode, &dis) != CS_ERR_OK)
+	{
+		fprintf(stderr, "Failed to open Capstone\n");
 		return -1;
 	}
 
-	count = cs_disasm(handle, code, code_size, code_addr, 0, &insn);
-	if (count > 0)
+	cs_option(dis, CS_OPT_DETAIL, CS_OPT_ON);
+
+	cs_insn *cs_ins = cs_malloc(dis);
+	if (!cs_ins)
 	{
-		size_t i;
-		for (i = 0; i < count; i++)
+		fprintf(stderr, "Out of memory");
+		cs_close(&dis);
+		return -1;
+	}
+
+	std::queue<address> Q;
+
+	// add all function symbol to Q
+	address addr = bin->entry;
+	if (text->contains(addr))
+		Q.push(addr);
+	for (auto &sym : bin->symbols)
+	{
+		if (sym.type == Symbol::SYM_TYPE_FUNC)
 		{
-			auto ins = &insn[i];
-			printf("0x%016I64X:\t", ins->address);
-			for (int k = 0; k < 16; k++)
-			{
-				if (k < ins->size)
-					printf("%02X ", ins->bytes[k]);
-				else
-					printf("   ");
-			}
-			printf("\t%s %s\n", ins->mnemonic, ins->op_str);
+			Q.push(sym.addr);
+			printf("Function symbol: 0x%016I64x  %s\n", sym.addr, sym.name.c_str());
+		}
+	}
+
+	std::map<address, bool> seen;
+	while (!Q.empty())
+	{
+		addr = Q.front();
+		Q.pop();
+		if (seen[addr])
+		{
+			printf("Already seen addr 0x%016I64x, ignored", addr);
+			continue;
 		}
 
-		cs_free(insn, count);
-	}
-	else
-		printf("ERROR: Failed to disassemble given code!\n");
+		offset off = addr - text->vma;
+		const BYTE *pc = text->bytes + off;
+		size_t n = text->size - off;
 
-	cs_close(&handle);
+		while (cs_disasm_iter(dis, &pc, &n, &addr, cs_ins))
+		{
+			if (cs_ins->id == X86_INS_INVALID || cs_ins->size == 0)
+			{
+				break;
+			}
+
+			seen[cs_ins->address] = true;
+			print_ins(cs_ins);
+
+			if (is_cs_cflow_ins(cs_ins))
+			{
+				address target = get_cs_ins_immediate_target(cs_ins);
+				if (target && !seen[target] && text->contains(target))
+				{
+					Q.push(target);
+					printf(" -> new target: 0x%016llu\n", target);
+				}
+				if (is_cs_unconditional_cflow_ins(cs_ins))
+				{
+					break;
+				}
+			}
+			else if (cs_ins->id == X86_INS_HLT)
+				break;
+		}
+		printf("-------------\n");
+	}
+
+	cs_free(cs_ins, 1);
+	cs_close(&dis);
 
 	return 0;
 }
@@ -110,23 +226,9 @@ int main(int argc, char *argv[])
 	}
 	cout << "Arch: " << arch_str << endl;
 
-	printf("Entry: 0x%016I64X\n", binary->entry);
+	printf("Entry: 0x%016I64x\n", binary->entry);
 
-	int count = binary->symbols.size();
-	printf("%d symbol%s found, symbols with name:\n", count, count > 1 ? "s" : "");
-	for(auto &sym: binary->symbols) {
-		if (!sym.name.empty()) {
-			printf("0x%016I64X: %s\n", sym.addr, sym.name.c_str());
-		}
-	}
-
-	for(auto section: binary->sections) {
-		if (section.name == ".text") {
-			cout << section.name << endl;
-
-			disasm(section.bytes, binary->base_addr + section.vma, section.size);
-		}
-	}
+	disasm(binary);
 
 	return 0;
 }
