@@ -9,6 +9,8 @@
 #include <queue>
 #include <map>
 
+using namespace std;
+
 void print_ins(cs_insn *ins)
 {
 	printf("0x%016I64x: ", ins->address);
@@ -46,6 +48,17 @@ bool is_cs_unconditional_cflow_ins(cs_insn *ins)
 	case X86_INS_RET:
 	case X86_INS_RETF:
 	case X86_INS_RETFQ:
+		return true;
+	default:
+		return false;
+	}
+}
+
+bool is_cs_ret_ins(cs_insn *ins)
+{
+	switch (ins->id)
+	{
+	case X86_INS_RET:
 		return true;
 	default:
 		return false;
@@ -98,7 +111,7 @@ int disasm(Binary *bin)
 		return -1;
 	}
 
-	std::queue<address> Q;
+	queue<address> Q;
 
 	// add all function symbol to Q
 	address addr = bin->entry;
@@ -113,7 +126,7 @@ int disasm(Binary *bin)
 		}
 	}
 
-	std::map<address, bool> seen;
+	map<address, bool> seen;
 	while (!Q.empty())
 	{
 		addr = Q.front();
@@ -163,7 +176,104 @@ int disasm(Binary *bin)
 	return 0;
 }
 
-using namespace std;
+int find_gadgets_at_root(Section *text, address root, map<string, vector<address>> *gadgets, csh dis)
+{
+	if (!text->contains(root))
+		return -1;
+
+	// we want to keep the gadget instructions simple,
+	// so max inscount in a gadget is limited to max_gadgets_ins_count
+	const size_t max_gadgets_ins_count = 5;
+	const size_t x86_max_ins_bytes = 15;
+	offset root_off = min(root - text->vma, max_gadgets_ins_count * x86_max_ins_bytes);
+
+	cs_insn *ins = cs_malloc(dis);
+	if (!ins)
+	{
+		fprintf(stderr, "Out of memory!");
+		return -1;
+	}
+
+	size_t ins_count = 0;
+	address start_addr = root - 1;
+	while (ins_count < max_gadgets_ins_count)
+	{
+		address addr = start_addr;
+		offset addr_off = addr - text->vma;
+		const uint8_t *pc = text->bytes + addr_off;
+		size_t rest_size = text->size - addr_off;
+		string gadget_str = "";
+		while (cs_disasm_iter(dis, &pc, &rest_size, &addr, ins))
+		{
+			if (ins->id == X86_INS_INVALID || ins->size == 0)
+				break;
+			if (ins->address > root)
+				break;
+			if (is_cs_cflow_ins(ins) && !is_cs_ret_ins(ins))
+				break;
+			
+			gadget_str += string(ins->mnemonic) + " " + string(ins->op_str);
+			if(ins->address == root) {
+				(*gadgets)[gadget_str].push_back(addr_off);
+				break;
+			}
+
+			gadget_str += "; ";
+			ins_count ++;
+		}
+		start_addr --;
+		if (start_addr < root - root_off)
+			break;
+	}
+	cs_free(ins, 1);
+
+	return 0;
+}
+
+int find_gadgets(Binary *bin)
+{
+	csh dis;
+	map<string, vector<address>> gadgets;
+
+	const uint8_t x86_opc_ret = 0xc3;
+
+	Section *text = bin->get_text_section();
+	if (!text)
+	{
+		fprintf(stderr, "Nothing to disassemble\n");
+		return 0;
+	}
+
+	cs_mode mode = (cs_mode)(bin->bits >> 4);
+	if (cs_open(CS_ARCH_X86, mode, &dis) != CS_ERR_OK)
+	{
+		fprintf(stderr, "Failed to open Capstone\n");
+		return -1;
+	}
+
+	cs_option(dis, CS_OPT_DETAIL, CS_OPT_ON);
+
+	for (size_t i = 0; i < text->size; i++)
+	{
+		if (text->bytes[i] == x86_opc_ret)
+		{
+			if (find_gadgets_at_root(text, text->vma + i, &gadgets, dis) < 0)
+				break;
+		}
+	}
+
+	for (auto &kv : gadgets)
+	{
+		printf("%s\t[ ", kv.first.c_str());
+		for (auto addr : kv.second)
+		{
+			printf("0x%016I64x ", addr);
+		}
+		printf("]\n");
+	}
+
+	return 0;
+}
 
 int main(int argc, char *argv[])
 {
@@ -228,7 +338,9 @@ int main(int argc, char *argv[])
 
 	printf("Entry: 0x%016I64x\n", binary->entry);
 
-	disasm(binary);
+	// disasm(binary);
+
+	find_gadgets(binary);
 
 	return 0;
 }
