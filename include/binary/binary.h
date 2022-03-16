@@ -75,7 +75,7 @@ public:
 
     Binary() : type(BIN_TYPE_AUTO), arch(ARCH_NONE), bits(0), entry(0), bytes(nullptr), base_addr(0) {}
     Binary(BinaryType type, std::string filename, uint8_t *bytes) : type(type), filename(filename), bytes(bytes) {}
-    ~Binary()
+    virtual ~Binary()
     {
         if (bytes)
         {
