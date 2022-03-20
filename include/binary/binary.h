@@ -25,15 +25,19 @@ public:
     enum SymbolType
     {
         SYM_TYPE_UKN = 0,
-        SYM_TYPE_FUNC = 1
+        SYM_TYPE_FUNC = 1,
+        SYM_TYPE_IMPORTED = 2,
+        SYM_TYPE_EXPORTED = 4
     };
 
     Symbol() : type(SYM_TYPE_UKN), name(), addr(0) {}
 
-    SymbolType type;
+    int type;
     std::string name;
     address addr;
 };
+
+typedef Symbol::SymbolType SymType;
 
 class Section
 {
@@ -54,7 +58,7 @@ public:
     SectionType type;
     address vma;
     uint64_t size;
-    uint8_t *bytes;
+    BYTE *bytes;
 };
 
 class Binary
@@ -74,7 +78,7 @@ public:
     };
 
     Binary() : type(BIN_TYPE_AUTO), arch(ARCH_NONE), bits(0), entry(0), bytes(nullptr), base_addr(0) {}
-    Binary(BinaryType type, std::string filename, uint8_t *bytes) : type(type), filename(filename), bytes(bytes) {}
+    Binary(BinaryType type, std::string filename, BYTE *bytes) : type(type), filename(filename), bytes(bytes) {}
     virtual ~Binary()
     {
         if (bytes)
@@ -103,13 +107,13 @@ public:
     address entry;
     std::vector<Section> sections;
     std::vector<Symbol> symbols;
-    uint8_t *bytes;
+    BYTE *bytes;
 };
 
 class PE_Binary : public Binary
 {
 public:
-    PE_Binary(std::string filename, uint8_t *bytes);
+    PE_Binary(std::string filename, BYTE *bytes);
     ~PE_Binary();
 
     int parse_bytes() override;
@@ -118,10 +122,14 @@ public:
 class ELF_Binary : public Binary
 {
 public:
-    ELF_Binary(std::string filename, uint8_t *bytes);
+    ELF_Binary(std::string filename, BYTE *bytes);
     ~ELF_Binary();
 
     int parse_bytes() override;
+
+private:
+    void elf32_init_sections();
+    void elf64_init_sections();
 };
 
 

@@ -1,4 +1,6 @@
 #include "binary.h"
+#include <assert.h>
+#include <cstring>
 
 Binary::BinaryType detect_file_binary_type(std::filesystem::path filename)
 {
@@ -26,7 +28,7 @@ Binary::BinaryType detect_file_binary_type(std::filesystem::path filename)
  *    PE_Binary implementation
  */
 
-PE_Binary::PE_Binary(std::string filename, uint8_t *bytes)
+PE_Binary::PE_Binary(std::string filename, BYTE *bytes)
     : Binary(Binary::BinaryType::BIN_TYPE_PE, filename, bytes)
 {
 }
@@ -109,7 +111,7 @@ int PE_Binary::parse_bytes()
  *    ELF_Binary implementation
  */
 
-ELF_Binary::ELF_Binary(std::string filename, uint8_t *bytes)
+ELF_Binary::ELF_Binary(std::string filename, BYTE *bytes)
     : Binary(Binary::BinaryType::BIN_TYPE_ELF, filename, bytes)
 {
 }
@@ -120,7 +122,8 @@ ELF_Binary::~ELF_Binary()
 
 int ELF_Binary::parse_bytes()
 {
-    base_addr = 0;
+    if (!bytes)
+        return -1;
 
     /* get arch and bits */
     Elf32_Ehdr *dummy_ehdr = (Elf32_Ehdr *)bytes;
@@ -144,6 +147,8 @@ int ELF_Binary::parse_bytes()
     size_t sh_num;
     if (32 == bits)
     {
+        elf32_init_sections();
+        /*
         Elf32_Ehdr *ehdr = (Elf32_Ehdr *)bytes;
         entry = ehdr->e_entry;
         sh_num = ehdr->e_shnum;
@@ -169,7 +174,7 @@ int ELF_Binary::parse_bytes()
         {
             Section s;
             s.binary = this;
-            s.bytes = (uint8_t *)(bytes + shdr[i].sh_offset);
+            s.bytes = (BYTE *)(bytes + shdr[i].sh_offset);
             if (shstrtab && shstrtab[shdr[i].sh_name])
             {
                 s.name = &shstrtab[shdr[i].sh_name];
@@ -233,9 +238,12 @@ int ELF_Binary::parse_bytes()
                 break;
             }
         }
+        */
     }
     else if (64 == bits)
     {
+        elf64_init_sections();
+        /*
         // refer to 32 bits for code comments
         Elf64_Ehdr *ehdr = (Elf64_Ehdr *)bytes;
         entry = ehdr->e_entry;
@@ -259,7 +267,7 @@ int ELF_Binary::parse_bytes()
         {
             Section s;
             s.binary = this;
-            s.bytes = (uint8_t *)(bytes + shdr[i].sh_offset);
+            s.bytes = (BYTE *)(bytes + shdr[i].sh_offset);
             if (shstrtab && shstrtab[shdr[i].sh_name])
             {
                 s.name = &shstrtab[shdr[i].sh_name];
@@ -321,7 +329,45 @@ int ELF_Binary::parse_bytes()
                 break;
             }
         }
+        */
     }
 
     return 0;
+}
+
+void ELF_Binary::elf32_init_sections()
+{
+    assert(bytes != nullptr);
+    Elf32_Ehdr *elf_header = (Elf32_Ehdr *)bytes;
+    Elf32_Shdr *section_header_table = (Elf32_Shdr *)(bytes + elf_header->e_shoff);
+    
+    char* shstrtab = nullptr;
+    for (int i = 0; i < elf_header->e_shnum; i++)
+    {
+        Section s;
+        Elf32_Shdr *psection_header = &section_header_table[i];
+        s.vma = psection_header->sh_addr;
+        s.binary = this;
+        s.size = psection_header->sh_size;
+        s.bytes = (BYTE*)(bytes + psection_header->sh_offset);
+        if (psection_header->sh_type == SHT_PROGBITS)
+            s.type = Section::SectionType::SEC_TYPE_CODE;
+        // we will get names after we get shstrtab
+        sections.push_back(s);
+
+        if (!shstrtab && psection_header->sh_type == SHT_STRTAB) {
+            char* dummy_section_name = &((char*)psection_header -> sh_offset)[psection_header->sh_size];
+            if (strcmp(dummy_section_name, ".shstrtab")) {
+                shstrtab = (char*)bytes + psection_header->sh_offset;
+            }
+        }
+
+        // TODO: 看下upx加壳之后有没有 .shstrtab
+    }
+    
+}
+
+void ELF_Binary::elf64_init_sections()
+{
+    assert(bytes != nullptr);
 }
